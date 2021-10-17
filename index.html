@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Geospatial Data Utility | Merge Polygons</title>
+    <link rel="stylesheet" href="css/leaflet-1.3.1.css" />
+    <script type="text/javascript" src="js/leaflet-1.3.1.js"></script>
+    <script src="js/shp.min.js"></script>
+	<script src="js/KMLStrtoGeoJSON.js"></script>
+	<script src="js/turf-3.5.1.js"></script>
+    <style>
+    html, body {
+    	padding:0;
+    	border:0;
+    	overflow:hidden;
+    }
+    body {
+    	height:100vh;
+    	width:100vw;
+    	overflow-x:hidden;
+    	overflow-y:auto;
+    }
+    table,
+    table th,
+    table td {
+    	font-family:"consolas";
+    	vertical-align:top;
+    	border-collapse: collapse;
+    }
+    select, input {
+    	width:90%;
+    	margin:0;
+    }
+    #map {
+    	width:55vw;
+    	height:80vh;
+    	margin:0 auto;
+    	box-shadow: rgba(3, 102, 214, 0.3) 0px 0px 0px 3px;
+    }
+    #mapPropsDatatableContainer {
+    	margin:0 auto;
+    	height:260px;
+    	width:40vw;
+    	overflow-x:auto;
+    	overflow-y:auto;
+    	padding:5px;
+    	box-shadow: rgba(255, 255, 255, 0.2) 0px 0px 0px 1px inset, 
+    	rgba(0, 0, 0, 0.9) 0px 0px 0px 1px;
+    }
+    #attributeForm table {
+    	width:80%;
+    }
+    .map-bounds-table {
+    	width:100%;
+    	height:100%;
+    	box-shadow: rgba(9, 30, 66, 0.25) 0px 1px 1px, 
+    	rgba(9, 30, 66, 0.13) 0px 0px 1px 1px;
+    }
+    </style>
+</head>
+<body>
+	<noscript>You need to enable JavaScript to run this app.</noscript>
+	<table>
+		<tr>
+			<td colspan='4'><h2>🌐 Combine Polygons in Spatial Data</h2></td>
+		</tr>
+		<tr>
+			<td><b>Select Spatial Format:</b></td>
+			<td><b>Map Bounding Box:</b></td>
+			<th width="3vw"></th>
+			<td><b>Map View:</b></td>
+		</tr>
+		<tr>
+			<td>
+				<select id="inputSpatialFormat">
+					<option value="GEOJSON">GEOJSON</option>
+					<option value="KML">KML</option>
+					<option value="SHP">SHP</option>
+				</select><br>
+				<span>📂</span><input id="inputSpatialFormatBtn" type="file" multiple="false" accept=".zip,.geojson,.json,.kml" />
+			</td>
+			<td>
+				<!-- Table of coordinates-->
+				<table border="1" class="map-bounds-table">
+					<tr><th colspan="2"><u>X Field:</u></th></tr>
+				 	<tr><th>X</th><td>(Longitude)</td></tr>
+	                <tr><th>Left:</th><td id="imgBounds_Left"></td></tr>
+	                <tr><th>Right:</th><td id="imgBounds_Right"></td></tr>
+	                <tr><th colspan="2"><u>Y Field:</u></th></tr>
+				 	<tr><th>Y</th><td>(Latitude)</td></tr>
+	                <tr><th>Bottom:</th><td id="imgBounds_Bottom"></td></tr>
+	                <tr><th>Top:</th><td id="imgBounds_Top"></td></tr>
+				</table>
+				<!-- //Table of coordinates-->
+			</td>
+			<th></th>
+			<td rowspan='2'>
+				<button id="clearMapViewBtn" type="button">❌</button><small>&nbsp;CLEAR ALL</small>
+				<button id="resetMapViewBtn" type="button">↺</button><small>&nbsp;RESET MAP</small>
+
+				<button id="saveBtn" type="button">💾</button><small>&nbsp;SAVE GEOJSON</small>
+				<hr>
+				<div id="map"></div>
+			</td>
+		</tr>
+		<tr>
+			<td colspan='2'>
+				<b>Select Map Property to Combine:</b>
+				&nbsp;<button id="unionPolygonsBtn" type="button">⇲⇱</button><small>&nbsp;MERGE POLYGONS</small>
+				<hr><small><div id="mapPropsDatatableContainer"></div></small>
+			</td>
+			<th></th>
+		</tr>
+	</table>
+	<script>
+		window.onload = function(e) {
+			var mapPropsDatatableContainer=document.getElementById("mapPropsDatatableContainer");
+			var mapContainer=document.getElementById("map");
+			var resetMapViewBtn=document.getElementById("resetMapViewBtn");
+			var clearMapViewBtn=document.getElementById("clearMapViewBtn");
+			var unionPolygonsBtn=document.getElementById("unionPolygonsBtn");
+
+			var imgBounds_Left=document.getElementById("imgBounds_Left");
+			var imgBounds_Right=document.getElementById("imgBounds_Right");
+			var imgBounds_Bottom=document.getElementById("imgBounds_Bottom");
+			var imgBounds_Top=document.getElementById("imgBounds_Top");
+
+			var inputSpatialFormatDDL = document.getElementById("inputSpatialFormat");
+			var inputSpatialFormatBtn = document.getElementById("inputSpatialFormatBtn");
+			var uploadSpatialFileIs=null;
+			var mapBoundsTable=document.getElementsByClassName("map-bounds-table")[0];
+
+			var uploadedGeojsonObj=null;
+
+			mapContainer["style"]["height"]=(mapBoundsTable.offsetHeight+mapPropsDatatableContainer.offsetHeight)+"px";
+
+			// initialise
+			var imgBounds=null
+			var layerBounds=null
+
+			var boundaryLayer=null
+
+			var map = L.map("map", {
+				zoomControl: false
+			})
+			map.on("zoomend", function(e) {
+				renderImageBounds()
+			});
+			map.on("dragend", function(e) {
+				renderImageBounds()
+			});
+			map.on("viewreset", function(e) {
+				renderImageBounds()
+			});
+			map.on("moveend", function(e) {
+				renderImageBounds()
+			});
+			map.on("load", function(e) {
+				renderImageBounds()
+			});
+			map.on("resize", function(e) {
+				renderImageBounds()
+			});
+
+			function resetMapView() {
+				layerBounds=boundaryLayer.getBounds()
+				let northEastLat = layerBounds._northEast.lat
+				let northEastLng = layerBounds._northEast.lng
+
+				let southWestLat = layerBounds._southWest.lat
+				let southWestLng = layerBounds._southWest.lng
+
+				map.fitBounds([
+				    [northEastLat, northEastLng],
+				    [southWestLat, southWestLng]
+				])
+			}
+
+			resetMapViewBtn.onclick=function(e) {
+				resetMapView();
+			};
+
+			unionPolygonsBtn.onclick=function(e) {
+				let attributeForm=document.getElementById("attributeForm");
+				let valueChecked=attributeForm.elements.attrToUnion.value;
+				let updatedGeojsonObj=unionPolygons(uploadedGeojsonObj, valueChecked);
+				clearMapViewBtn.click();
+				renderGeojsonLayer(updatedGeojsonObj);
+			};
+
+			var saveBtn=document.getElementById("saveBtn");
+	        saveBtn.onclick=function() {
+	        	let txtContent=JSON.stringify(uploadedGeojsonObj,2);
+	    	  	if (!window.Blob) {
+	                alert("Your browser does not support HTML5 'Blob' function required to save a file.");
+	            } else {
+	                let textblob = new Blob([txtContent], {
+	                    type: "text/plain"
+	                });
+	                let dwnlnk = document.createElement("a");
+	                dwnlnk.download = "mergedOutput.geojson";
+	                dwnlnk.innerHTML = "Download File";
+	                if (window.webkitURL != null) {
+	                    dwnlnk.href = window.webkitURL.createObjectURL(textblob);
+	                }
+	                dwnlnk.click();
+	            }
+	        };
+
+
+			function unionPolygons(inputGeojsonObj,propToCombine) {
+				let geojsonInputFeatures=inputGeojsonObj["features"];
+		        let uniquePropValues={};
+		        let uniquePropObjs={};
+		        for(let g in geojsonInputFeatures) {
+		            let geojsonInputFeature=geojsonInputFeatures[g];
+		            let featureProps=geojsonInputFeature["properties"];
+		            let featureGeometry=geojsonInputFeature["geometry"];
+		            let featureGeometryType=featureGeometry["type"];
+
+		            let uniquePropValue=featureProps[propToCombine];
+		            if(typeof uniquePropValues[uniquePropValue]=="undefined") {
+		                uniquePropValues[uniquePropValue]=[];
+		            }
+		            if(featureGeometryType=="Polygon") {
+		                let coordinates=featureGeometry["coordinates"];
+		                uniquePropValues[uniquePropValue].push(coordinates);
+		            } else if(featureGeometryType=="MultiPolygon") {
+		                let multiPolyCoords=featureGeometry["coordinates"];
+		                for(let m1 in multiPolyCoords) {
+		                    for(let m2 in multiPolyCoords[m1]) {
+		                        let polyCoords=[multiPolyCoords[m1][m2]];
+		                        uniquePropValues[uniquePropValue].push(polyCoords);
+		                    }
+		                }
+		            } else if(featureGeometryType=="GeometryCollection") {
+		                let geometriesArr=featureGeometry["geometries"];
+		                for(let g2 in geometriesArr) {
+		                    let geometrySubObj=geometriesArr[g2];
+		                    let geometrySubType=geometrySubObj["geometry"]["type"];
+		                    if(geometrySubType=="Polygon") {
+		                        let polyCoords=geometrySubObj["geometry"]["coordinates"];
+		                        uniquePropValues[uniquePropValue].push(polyCoords);
+		                    } else if(geometrySubType=="MultiPolygon") {
+		                        let multiPolyCoords=geometrySubObj["geometry"]["coordinates"];
+		                        for(let m1 in multiPolyCoords) {
+		                            for(let m2 in multiPolyCoords[m1]) {
+		                                let polyCoords=[multiPolyCoords[m1][m2]];
+		                                uniquePropValues[uniquePropValue].push(polyCoords);
+		                            }
+		                        }
+		                    }
+		                }
+		            }
+		            uniquePropObjs[uniquePropValue]=featureProps;
+		        }
+		        let geojsonOutput= {
+		            "type": "Feature Collection", 
+		            "features": []
+		        };
+		        for(let uKey in uniquePropValues) {
+		            let uniquePropObj=uniquePropObjs[uKey];
+		            let uniquePropValueCoords=uniquePropValues[uKey];   
+		            let subPolyArr=[];
+		            for(let uIndex in uniquePropValueCoords) {
+		                let subPolyCoords=uniquePropValueCoords[uIndex];
+		                if(typeof subPolyCoords !== "undefined") {
+		                    let poly=turf.polygon(subPolyCoords, uniquePropObj);
+		                    subPolyArr.push(poly);
+		                }
+		            }
+		            let prevPoly=null;
+		            for(let uIndex in subPolyArr) {
+		                if(prevPoly==null) {
+		                    prevPoly=subPolyArr[uIndex];
+		                } 
+		                if(typeof subPolyArr[uIndex] !== "undefined") {
+		                    prevPoly = turf.union(prevPoly, subPolyArr[uIndex]);
+		                }
+		            }
+		            geojsonOutput["features"].push(prevPoly);
+		        }
+		        return geojsonOutput;
+			}
+
+			clearMapViewBtn.onclick=function(e) {
+				mapPropsDatatableContainer.innerHTML="";
+				uploadSpatialFileIs=null;
+				spatialType="GEOJSON";
+
+				map.eachLayer(function(layer) {
+					map.removeLayer(layer)
+				});
+
+				imgBounds=null
+				layerBounds=null
+				
+				boundaryLayer=null
+				inputSpatialFormatBtn.value=""
+
+				imgBounds_Left.innerHTML=""
+				imgBounds_Right.innerHTML=""
+
+				imgBounds_Bottom.innerHTML=""
+				imgBounds_Top.innerHTML=""
+			}
+
+			function renderImageBounds() {
+				imgBounds=map.getBounds()
+				imgBounds_Left.innerHTML=imgBounds._southWest.lng
+				imgBounds_Right.innerHTML=imgBounds._northEast.lng
+
+				imgBounds_Bottom.innerHTML=imgBounds._southWest.lat
+				imgBounds_Top.innerHTML=imgBounds._northEast.lat
+			}
+
+			inputSpatialFormatBtn.onclick = function(e) {
+				e.target.value = "";
+			}
+
+			var geojsonHeaders={};
+			function renderGeojsonLayer(geojson) {
+				geojsonHeaders={};
+				mapPropsDatatableContainer.innerHTML="";
+				uploadedGeojsonObj = geojson;
+				let uploadedGeojsonObjFeatures=uploadedGeojsonObj["features"];
+				for(let u in uploadedGeojsonObjFeatures) {
+					let uploadedGeojsonObjFeature=uploadedGeojsonObjFeatures[u];
+					let uploadedGeojsonObjFeatureProps=uploadedGeojsonObjFeature["properties"];
+
+					geojsonHeaders={
+						...uploadedGeojsonObjFeatureProps,
+						...geojsonHeaders
+					};
+				}
+				geojsonHeaders=Object.keys(geojsonHeaders);
+				let mapPropsDatatableHtmlStr="<form id='attributeForm'>";
+				mapPropsDatatableHtmlStr+="<table>";
+
+				for(let gIndex=0;gIndex<geojsonHeaders.length;gIndex++) {
+					let geojsonHeader=geojsonHeaders[gIndex];
+					mapPropsDatatableHtmlStr+="<tr><td align='left'><b>"+geojsonHeader+"</b></td><td align='left'><input type='radio' value='"+geojsonHeader+"' name='attrToUnion' /></td></tr>";
+				}
+				mapPropsDatatableHtmlStr+="</table>";
+				mapPropsDatatableHtmlStr+="</form>";
+				mapPropsDatatableContainer.innerHTML=mapPropsDatatableHtmlStr;
+
+				boundaryLayer = L.geoJSON(uploadedGeojsonObj, {
+				    style: function (feature) {
+				        return {
+				        	fillColor: "#F8F9FA",
+				        	color: "#000000",
+				        	weight:1.0,
+				        	opacity: 1.0,
+				        	fillOpacity: 0.65
+				        }
+				    }
+				}).bindPopup(function (layer) {
+				    return jsonObjToHTMLTable(layer.feature.properties)
+				}).addTo(map)
+				resetMapView();
+			}
+
+			inputSpatialFormatBtn.onchange = function(uploadFle) {
+				if(uploadFle.target.value !== "" && uploadFle.target.files.length>0) {
+					uploadedGeojsonObj=null;
+					// check which spatial format is selected
+					let spatialType=inputSpatialFormatDDL.value;
+
+			        if (!window.FileReader) {
+			            alert("Your browser does not support HTML5 'FileReader' function required to open a file.");
+			        } else {
+			            var fileis = inputSpatialFormatBtn.files[0]
+			            var fileredr = new FileReader()
+			        	if(spatialType=="SHP") {
+			        		fileredr.readAsArrayBuffer(fileis)
+			        	} else if(spatialType=="KML" || spatialType=="GEOJSON") {
+			            	fileredr.readAsText(fileis)
+			            }
+			            fileredr.onload = function (fle) {
+			            	var filecont = fle.target.result // array buffer
+			               	uploadSpatialFileIs=filecont
+				            if(spatialType=="SHP") {
+				            	shp(uploadSpatialFileIs).then(function(geojsonObj) {
+								  	renderGeojsonLayer(geojsonObj)
+								}) // end shp-file
+				            } else if(spatialType=="KML") {
+				            	let geojsonObj=KMLStrtoGeoJSON(uploadSpatialFileIs)
+				            	renderGeojsonLayer(geojsonObj)
+				            } else if(spatialType=="GEOJSON") {
+				            	let geojsonObj=null
+				            	try {
+				            		geojsonObj=JSON.parse(uploadSpatialFileIs)
+				            	} catch(err) {
+				            		if(err.message.indexOf("SyntaxError: Unexpected token") < 0) {
+				            			geojsonObj=null
+				            		}
+				            	}
+				            	if(geojsonObj !== null) {
+									renderGeojsonLayer(geojsonObj)				            	
+				            	}
+				            }
+			           } // end file-reader onload
+			        }; // end if-else
+			    }
+			}; // inputSpatialFormatBtn func
+			
+			function jsonObjToHTMLTable(jsonObj) {
+				let output="<small><table border='1'>";
+				for(let keyIndex in jsonObj) {
+					try {
+						output+="<tr>";
+						output+="<th>" + keyIndex  + "</th>";
+						output+="<td>" + jsonObj[keyIndex]  + "</td>";
+						output+="</tr>";
+					} catch(err) {}
+				}
+				output+="</table></small>"
+				return output
+			}
+		};
+	</script>
+</body>
+</html>
